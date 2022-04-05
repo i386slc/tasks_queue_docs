@@ -14,4 +14,6 @@
   * [Первые шаги с Celery](celery/nachalo-raboty-s-celery/pervye-shagi-s-celery.md)
   * [Следующие шаги](celery/nachalo-raboty-s-celery/sleduyushie-shagi.md)
   * [Ресурсы для Celery](celery/nachalo-raboty-s-celery/resursy-dlya-celery.md)
-* [Руководство пользователя Celery](celery/rukovodstvo-polzovatelya-celery.md)
+* [Руководство пользователя Celery](celery/rukovodstvo-polzovatelya-celery/README.md)
+  * [Приложение Application Celery](celery/rukovodstvo-polzovatelya-celery/prilozhenie-application-celery.md)
+  * [Конфигурация и установки по умолчанию](celery/rukovodstvo-polzovatelya-celery/konfiguraciya-i-ustanovki-po-umolchaniyu.md)
