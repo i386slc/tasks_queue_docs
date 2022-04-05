@@ -1,10 +1,10 @@
 # Приложение Application Celery
 
 * [Основное имя](prilozhenie-application-celery.md#osnovnoe-imya)
-* Конфигурация
-* Лень
-* Разрыв цепи
-* Абстрактные задачи
+* [Конфигурация](prilozhenie-application-celery.md#konfiguraciya)
+* [Лень](prilozhenie-application-celery.md#len)
+* [Разрыв цепочки](prilozhenie-application-celery.md#razryv-cepochki)
+* [Абстрактные задачи](prilozhenie-application-celery.md#abstraktnye-zadachi)
 
 Библиотека Celery должна быть инициализирована перед использованием, этот экземпляр называется приложением (или **app** для краткости).
 
@@ -248,3 +248,211 @@ Celery поставляется с несколькими утилитами, п
 `API`, `TOKEN`, `KEY`, `SECRET`, `PASS`, `SIGNATURE`, `DATABASE`
 
 ## Лень
+
+Экземпляр приложения является ленивым, то есть он не будет оцениваться до тех пор, пока он действительно не понадобится.
+
+Создание экземпляра [Celery](https://docs.celeryq.dev/en/stable/reference/celery.html#celery.Celery) будет выполнять только следующие действия:
+
+1. Создание экземпляр логических часов, используемый для событий.
+2. Создание реестр задач.
+3. Установка себя как текущего приложения (но не в том случае, если аргумент **set\_as\_current** был отключен)
+4. Вызывает обратный вызов [app.on\_init()](https://docs.celeryq.dev/en/stable/reference/celery.html#celery.Celery.on\_init) (по умолчанию ничего не делает).
+
+Декораторы [app.task()](https://docs.celeryq.dev/en/stable/reference/celery.html#celery.Celery.task) не создают задачи в тот момент, когда задача определена, вместо этого они откладывают создание задачи до того, как она будет использована, или после того, как приложение будет завершено.
+
+В этом примере показано, как задача не создается до тех пор, пока вы не используете задачу или не получите доступ к атрибуту (в данном случае **repr()**):
+
+```python
+>>> @app.task
+>>> def add(x, y):
+...    return x + y
+
+>>> type(add)
+<class 'celery.local.PromiseProxy'>
+
+>>> add.__evaluated__()
+False
+
+>>> add        # <-- вызывает repr(add)
+<@task: __main__.add>
+
+>>> add.__evaluated__()
+True
+```
+
+_**Завершение**_ приложения происходит либо явно, вызывая [app.finalize()](https://docs.celeryq.dev/en/stable/reference/celery.html#celery.Celery.finalize), либо неявно, обращаясь к атрибуту **app.tasks**.
+
+Завершение объекта будет:
+
+1. Скопируйте задачи, которые должны быть разделены между приложениями. Задачи являются общими по умолчанию, но если общий аргумент для декоратора задач отключен, задача будет частной для приложения, к которому она привязана.
+2. Оцените все ожидающие декораторы задач.
+3. Убедитесь, что все задачи привязаны к текущему приложению. Задачи привязаны к приложению, чтобы они могли считывать значения по умолчанию из конфигурации.
+
+{% hint style="info" %}
+**default\_app**
+
+У Celery не всегда были приложения, раньше было только модульное API. API совместимости был доступен в старом месте до выпуска Celery 5.0, но был удален.
+
+Celery всегда создает специальное приложение — «default\_app», и оно используется, если не было создано ни одного пользовательского приложения.
+
+Модуль **celery.task** больше недоступен. Используйте методы экземпляра приложения, а не API на основе модуля:
+
+```python
+from celery.task import Task   # << OLD Task base class.
+
+from celery import Task        # << NEW base class.
+```
+{% endhint %}
+
+## Разрыв цепочки
+
+Хотя можно зависеть от текущего установленного приложения, лучше всего всегда передавать экземпляр приложения всему, что в нем нуждается.
+
+Я называю это цепочкой приложений (_app chain_), поскольку она создает цепочку экземпляров в зависимости от передаваемого приложения.
+
+Следующий пример считается плохой практикой:
+
+```python
+from celery import current_app
+
+class Scheduler:
+
+    def run(self):
+        app = current_app
+```
+
+Вместо этого он должен принимать приложение **app** в качестве аргумента:
+
+```python
+class Scheduler:
+
+    def __init__(self, app):
+        self.app = app
+```
+
+Внутри Celery используется функция [celery.app.app\_or\_default()](https://docs.celeryq.dev/en/stable/reference/celery.app.html#celery.app.app\_or\_default), так что все также работает в API совместимости на основе модулей.
+
+```python
+from celery.app import app_or_default
+
+class Scheduler:
+    def __init__(self, app=None):
+        self.app = app_or_default(app)
+```
+
+В процессе разработки вы можете установить переменную среды **CELERY\_TRACE\_APP** для создания исключения в случае разрыва цепочки приложений:
+
+```bash
+$ CELERY_TRACE_APP=1 celery worker -l INFO
+```
+
+{% hint style="info" %}
+**Эволюция API**
+
+Celery сильно изменился с 2009 года с момента его создания.
+
+Например, вначале в качестве задачи можно было использовать любой callable:
+
+```python
+def hello(to):
+    return 'hello {0}'.format(to)
+
+>>> from celery.execute import apply_async
+
+>>> apply_async(hello, ('world!',))
+```
+
+или вы также можете создать класс **Task** для установки определенных параметров или переопределения другого поведения.
+
+```python
+from celery import Task
+from celery.registry import tasks
+
+class Hello(Task):
+    queue = 'hipri'
+
+    def run(self, to):
+        return 'hello {0}'.format(to)
+tasks.register(Hello)
+
+>>> Hello.delay('world!')
+```
+
+Позже было решено, что передача произвольных call-able’ов — это антишаблон, так как очень сложно использовать сериализаторы, отличные от **pickle**, и эта функция была удалена в 2.0, заменена декораторами задач:
+
+```python
+from celery import app
+
+@app.task(queue='hipri')
+def hello(to):
+    return 'hello {0}'.format(to)
+```
+{% endhint %}
+
+## Абстрактные задачи
+
+Все задачи, созданные с помощью декоратора [app.task()](https://docs.celeryq.dev/en/stable/reference/celery.html#celery.Celery.task), будут наследоваться от базового класса [Task](https://docs.celeryq.dev/en/stable/reference/celery.app.task.html#celery.app.task.Task) приложения.
+
+Вы можете указать другой базовый класс, используя базовый аргумент **base**:
+
+```python
+@app.task(base=OtherTask):
+def add(x, y):
+    return x + y
+```
+
+Чтобы создать собственный класс задач, вы должны наследовать его от нейтрального базового класса: **celery.Task**.
+
+```python
+from celery import Task
+
+class DebugTask(Task):
+
+    def __call__(self, *args, **kwargs):
+        print('TASK STARTING: {0.name}[{0.request.id}]'.format(self))
+        return self.run(*args, **kwargs)
+```
+
+{% hint style="info" %}
+СОВЕТ:
+
+Если вы переопределяете метод **\_\_call\_\_** задачи, очень важно, чтобы вы также вызывали **self.run** для выполнения тела задачи. Не вызывайте `super().__call__`. Метод **\_\_call\_\_** нейтрального базового класса **celery.Task** представлен только для справки. Для оптимизации это было развернуто в `celery.app.trace.build_tracer.trace_task`, вызовы которого выполняются непосредственно в пользовательском классе задач, если метод **\_\_call\_\_** не определен.
+{% endhint %}
+
+Нейтральный базовый класс особенный, потому что он еще не привязан ни к какому конкретному приложению. Как только задача будет привязана к приложению, она прочитает конфигурацию, чтобы установить значения по умолчанию и так далее.
+
+Чтобы реализовать базовый класс, вам нужно создать задачу с помощью декоратора [app.task()](https://docs.celeryq.dev/en/stable/reference/celery.html#celery.Celery.task):
+
+```python
+@app.task(base=DebugTask)
+def add(x, y):
+    return x + y
+```
+
+Можно даже изменить базовый класс по умолчанию для приложения, изменив его атрибут [app.Task()](https://docs.celeryq.dev/en/stable/reference/celery.app.task.html#celery.app.task.Task):
+
+```python
+>>> from celery import Celery, Task
+
+>>> app = Celery()
+
+>>> class MyBaseTask(Task):
+...    queue = 'hipri'
+
+>>> app.Task = MyBaseTask
+>>> app.Task
+<unbound MyBaseTask>
+
+>>> @app.task
+... def add(x, y):
+...     return x + y
+
+>>> add
+<@task: __main__.add>
+
+>>> add.__class__.mro()
+[<class add of <Celery __main__:0x1012b4410>>,
+ <unbound MyBaseTask>,
+ <unbound Task>,
+ <type 'object'>]
+```
