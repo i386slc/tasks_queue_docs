@@ -389,3 +389,96 @@ s3.delay(debug=False)   # debug сейчас False.
 Все это кажется очень полезным, но что вы на самом деле можете с этим сделать? Чтобы добраться до этого, я должен представить примитивы холста…
 
 ### Примитивы
+
+* <mark style="color:purple;">group</mark>
+* <mark style="color:purple;">chain</mark>
+* <mark style="color:purple;">chord</mark>
+* <mark style="color:purple;">map</mark>
+* <mark style="color:purple;">starmap</mark>
+* <mark style="color:purple;">chunks</mark>
+
+Эти примитивы сами по себе являются сигнатурными объектами, поэтому их можно комбинировать любым количеством способов для создания сложных рабочих процессов.
+
+{% hint style="info" %}
+Эти примеры извлекают результаты, поэтому, чтобы попробовать их, вам нужно настроить серверную часть результатов. Приведенный выше пример проекта уже делает это (см. бэкэнд-аргумент для <mark style="color:purple;">Celery</mark>).
+{% endhint %}
+
+Давайте рассмотрим несколько примеров:
+
+#### Группы (group)
+
+<mark style="color:purple;">group</mark> вызывает список задач параллельно и возвращает специальный экземпляр результата, который позволяет просматривать результаты как группу и извлекать возвращаемые значения по порядку.
+
+```python
+>>> from celery import group
+>>> from proj.tasks import add
+
+>>> group(add.s(i, i) for i in range(10))().get()
+[0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
+```
+
+Частичная группа
+
+```python
+>>> g = group(add.s(i) for i in range(10))
+>>> g(10).get()
+[10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+```
+
+#### Цепи (chain)
+
+Задачи могут быть связаны друг с другом, так что после возврата одной задачи вызывается другая:
+
+```python
+>>> from celery import chain
+>>> from proj.tasks import add, mul
+
+# (4 + 4) * 8
+>>> chain(add.s(4, 4) | mul.s(8))().get()
+64
+```
+
+или частичная цепь:
+
+```python
+>>> # (? + 4) * 8
+>>> g = chain(add.s(4) | mul.s(8))
+>>> g(4).get()
+64
+```
+
+Цепи также можно записать так:
+
+```python
+>>> (add.s(4, 4) | mul.s(8))().get()
+64
+```
+
+#### Хорды (chord)
+
+Хорда — это группа с обратным вызовом:
+
+```python
+>>> from celery import chord
+>>> from proj.tasks import add, xsum
+
+>>> chord((add.s(i, i) for i in range(10)), xsum.s())().get()
+90
+```
+
+Группа, привязанная к другой задаче, будет автоматически преобразована в хорду:
+
+```python
+>>> (group(add.s(i, i) for i in range(10)) | xsum.s())().get()
+90
+```
+
+Поскольку все эти примитивы относятся к типу **signature**, их можно комбинировать почти так, как вы хотите, например:
+
+```python
+>>> upload_document.s(file) | group(apply_filter.s() for filter in filters)
+```
+
+Не забудьте прочитать больше о рабочих процессах в <mark style="color:purple;">руководстве пользователя Canvas</mark>.
+
+## Маршрутизация (routing)
