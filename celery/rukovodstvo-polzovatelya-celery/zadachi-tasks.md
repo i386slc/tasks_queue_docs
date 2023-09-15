@@ -44,7 +44,7 @@ response = requests.get(URL, timeout=(connect_timeout, read_timeout))
 * [Названия](zadachi-tasks.md#nazvaniya)
 * [Объект Request задачи Task](zadachi-tasks.md#obekt-request-zadachi-task)
 * [Ведение журнала](zadachi-tasks.md#vedenie-zhurnala-logirovanie)
-* Повторная попытка
+* [Повторная попытка](zadachi-tasks.md#povtornaya-popytka)
 * [Список параметров](zadachi-tasks.md#spisok-parametrov)
 * Состояния
 * Полупредикаты
@@ -280,6 +280,138 @@ def dump_context(self, x, y):
 Аргумент **bind** означает, что функция будет «привязанным методом», чтобы вы могли получить доступ к атрибутам и методам экземпляра типа задачи.
 
 ## Ведение журнала (логирование)
+
+Воркер автоматически настроит вам ведение журнала, либо вы можете настроить ведение журнала вручную.
+
+Доступен специальный регистратор с именем `"celery.task"`, который вы можете наследовать от этого регистратора, чтобы автоматически получать имя задачи и уникальный идентификатор как часть журналов.
+
+Лучше всего создать общий регистратор для всех ваших задач в верхней части вашего модуля:
+
+```python
+from celery.utils.log import get_task_logger
+
+logger = get_task_logger(__name__)
+
+@app.task
+def add(x, y):
+    logger.info('Adding {0} + {1}'.format(x, y))
+    return x + y
+```
+
+Celery использует стандартную библиотеку логгеров Python, документацию можно найти [здесь](https://docs.python.org/dev/library/logging.html#module-logging).
+
+Вы также можете использовать [print()](https://docs.python.org/dev/library/functions.html#print), так как все, записанное в стандартный out/-err, будет перенаправлено в систему журналирования (вы можете отключить это, см. [worker\_redirect\_stdouts](konfiguraciya-i-ustanovki-po-umolchaniyu.md#worker\_redirest\_stdouts)).
+
+{% hint style="info" %}
+Воркер не будет обновлять перенаправление, если вы создадите экземпляр журнала где-то в своей задаче или модуле задач.
+
+Если вы хотите перенаправить `sys.stdout` и `sys.stderr` в пользовательский регистратор, вам необходимо включить это вручную, например:
+
+```python
+import sys
+
+logger = get_task_logger(__name__)
+
+@app.task(bind=True)
+def add(self, x, y):
+    old_outs = sys.stdout, sys.stderr
+    rlevel = self.app.conf.worker_redirect_stdouts_level
+    try:
+        self.app.log.redirect_stdouts_to_logger(logger, rlevel)
+        print('Adding {0} + {1}'.format(x, y))
+        return x + y
+    finally:
+        sys.stdout, sys.stderr = old_outs
+```
+{% endhint %}
+
+{% hint style="info" %}
+Если конкретный регистратор Celery, который вам нужен, не выдает журналы, вам следует убедиться, что регистратор распространяется правильно. В этом примере `"celery.app.trace"` включен, поэтому создаются журналы «успешного входа»:
+
+```python
+import celery
+import logging
+
+@celery.signals.after_setup_logger.connect
+def on_after_setup_logger(**kwargs):
+    logger = logging.getLogger('celery')
+    logger.propagate = True
+    logger = logging.getLogger('celery.app.trace')
+    logger.propagate = True
+```
+{% endhint %}
+
+{% hint style="info" %}
+Если вы хотите полностью отключить конфигурацию ведения журнала Celery, используйте сигнал <mark style="color:purple;">setup\_logging</mark>:
+
+```python
+import celery
+
+@celery.signals.setup_logging.connect
+def on_setup_logging(**kwargs):
+    pass
+```
+{% endhint %}
+
+### Проверка аргументов
+
+> _Новое в версии 4.0._
+
+Celery проверит аргументы, переданные при вызове задачи, точно так же, как это делает Python при вызове обычной функции:
+
+```python
+>>> @app.task
+>>> def add(x, y):
+...    return x + y
+
+# Вызов задачи с двумя аргументами работает:
+>>> add.delay(8, 8)
+<AsyncResult: f59d71ca-1549-43e0-be41-4e8821a83c0c>
+
+# Вызов задачи только с одним аргументом не удался:
+>>> add.delay(8)
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "celery/app/task.py", line 376, in delay
+    return self.apply_async(args, kwargs)
+  File "celery/app/task.py", line 485, in apply_async
+    check_arguments(*(args or ()), **(kwargs or {}))
+TypeError: add() takes exactly 2 arguments (1 given)
+```
+
+Вы можете отключить проверку аргументов для любой задачи, установив для ее атрибута <mark style="color:purple;">typing</mark> значение `False`:
+
+```python
+>>> @app.task(typing=False)
+... def add(x, y):
+...    return x + y
+
+# Работает локально, но воркер, получающий задание, выдаст ошибку.
+>>> add.delay(8)
+<AsyncResult: f59d71ca-1549-43e0-be41-4e8821a83c0c>
+```
+
+### Скрытие конфиденциальной информации в аргументах
+
+> _Новое в версии 4.0._
+
+При использовании [task\_protocol](konfiguraciya-i-ustanovki-po-umolchaniyu.md#task\_protocol) 2 или выше (по умолчанию, начиная с версии `4.0`) вы можете переопределить способ представления позиционных аргументов и аргументов ключевых слов в журналах и событиях мониторинга, используя аргументы вызова **argsrepr** и **kwargsrepr**:
+
+```python
+>>> add.apply_async((2, 3), argsrepr='(<secret-x>, <secret-y>)')
+
+>>> charge.s(account, card='1234 5678 1234 5678').set(
+...    kwargsrepr=repr({'card': '**** **** **** 5678'})
+... ).delay()
+```
+
+{% hint style="danger" %}
+Конфиденциальная информация по-прежнему будет доступна любому, кто сможет прочитать ваше сообщение о задании от брокера или иным образом перехватить его.
+
+По этой причине вам, вероятно, следует зашифровать свое сообщение, если оно содержит конфиденциальную информацию, или в этом примере с номером кредитной карты фактический номер может быть сохранен в зашифрованном виде в безопасном хранилище, которое вы извлекаете и расшифровываете в самой задаче.
+{% endhint %}
+
+## Повторная попытка
 
 ## Список параметров
 
