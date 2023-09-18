@@ -17,4 +17,5 @@
 * [Руководство пользователя Celery](celery/rukovodstvo-polzovatelya-celery/README.md)
   * [Приложение Application Celery](celery/rukovodstvo-polzovatelya-celery/prilozhenie-application-celery.md)
   * [Задачи (tasks)](celery/rukovodstvo-polzovatelya-celery/zadachi-tasks.md)
+  * [Вызов задач](celery/rukovodstvo-polzovatelya-celery/vyzov-zadach.md)
   * [Конфигурация и установки по умолчанию](celery/rukovodstvo-polzovatelya-celery/konfiguraciya-i-ustanovki-po-umolchaniyu.md)
