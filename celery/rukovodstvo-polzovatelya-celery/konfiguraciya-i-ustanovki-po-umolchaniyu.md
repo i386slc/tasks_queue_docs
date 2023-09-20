@@ -38,6 +38,12 @@
 
 #### result\_backend
 
+### Настройки backend в базе данных
+
+### Настройки RPC backend
+
+#### result\_persistent
+
 ### Ведение журнала (логирование)
 
 #### worker\_redirest\_stdouts
